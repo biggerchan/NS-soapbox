@@ -1,0 +1,8 @@
+const container=document.querySelector('#reports');
+const toast=document.querySelector('#toast');
+function notify(t){toast.textContent=t;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),3000);}
+async function call(url,body){const res=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});const data=await res.json();if(!res.ok)throw Error(data.error||'失敗');return data;}
+function element(tag,cls,text){const e=document.createElement(tag);e.className=cls||'';e.textContent=text||'';return e;}
+function action(label,fn){const b=element('button','ghost',label);b.addEventListener('click',fn);return b;}
+async function load(){container.replaceChildren(element('p','empty','正在取得資料...'));try{const {reports}=await call('/api/admin/reports');container.replaceChildren();if(!reports.length){container.append(element('p','empty','沒有待處理的檢舉。'));return;}for(const r of reports){const card=element('article','post');card.append(element('span','tag',r.target_type==='post'?'文章':'留言'),element('h3','',`檢舉 #${r.id} · 項目 #${r.target_id}`),element('p','',r.target_excerpt||'（內容不存在）'),element('p','',`檢舉原因：${r.reason}`),element('span','meta',r.created_at));const row=element('div','post-actions');row.append(action('隱藏內容',async()=>{if(!confirm('確認隱藏此內容？'))return;try{await call('/api/admin/hide',{type:r.target_type,id:r.target_id});notify('已隱藏');load();}catch(e){notify(e.message);}}),action('標記已處理',async()=>{try{await call('/api/admin/resolve',{id:r.id});notify('已處理');load();}catch(e){notify(e.message);}}));card.append(row);container.append(card);}}catch(e){container.replaceChildren(element('p','empty','無法取得檢舉：'+e.message));}}
+document.querySelector('#refresh').addEventListener('click',load);load();
