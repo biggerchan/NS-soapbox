@@ -30,4 +30,15 @@ async function loadComments(){const target=$('#comments');target.replaceChildren
 $('#commentForm').addEventListener('submit',async(e)=>{e.preventDefault();try{await api(`/api/posts/${state.activeId}/comments`,{method:'POST',body:JSON.stringify({body:$('#commentBody').value})});$('#commentBody').value='';await loadComments();await load();toast('匿名留言已發布。');}catch(err){toast(err.message);}});
 function report(type,id){state.report={type,id};openDialog('reportDialog');}
 $('#reportForm').addEventListener('submit',async(e)=>{e.preventDefault();try{await api('/api/reports',{method:'POST',body:JSON.stringify({...state.report,reason:$('#reportReason').value})});$('#reportDialog').close();$('#reportForm').reset();toast('已收到檢舉，謝謝你的回報。');}catch(err){toast(err.message);}});
+loadSiteText();
 load();
+async function loadSiteText(){
+ try {
+  const data=await api('/api/site-settings');
+  for(const node of document.querySelectorAll('[data-site-key]')){
+   const value=data.settings?.[node.dataset.siteKey];
+   if(typeof value==='string')node.textContent=value;
+  }
+  if(data.settings?.brand)document.title=data.settings.brand+'｜匿名意見';
+ }catch(e){console.warn('文案讀取失敗，保留預設文案',e);}
+}
