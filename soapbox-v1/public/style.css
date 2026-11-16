@@ -143,3 +143,59 @@
     outline: none;
   }
 }
+
+/* NICE BOX 手機版圖片與投稿按鈕最終修正 */
+@media (max-width: 760px) {
+
+  .site-home .hero-banner {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .site-home .hero-banner picture {
+    display: block;
+    width: 100%;
+  }
+
+  .site-home .hero-banner .hero-art {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: auto;
+    object-fit: contain;
+  }
+
+  /* 透明點擊區：對準手機圖片的桃紅色按鈕 */
+  .site-home .hero-banner .hero-hit {
+    position: absolute;
+    left: 44%;
+    top: 36.5%;
+    width: 49%;
+    height: 10%;
+    margin: 0;
+    padding: 0;
+    transform: none;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    font-size: 0;
+    line-height: 0;
+    z-index: 2;
+  }
+
+  /* 移除額外的黃色按鈕文字 */
+  .site-home .hero-banner .hero-hit::after {
+    content: none;
+  }
+
+  .site-home .hero-banner .hero-hit:hover {
+    background: transparent;
+    outline: none;
+  }
+
+  /* 移除圖片下方的提示文字 */
+  .site-home .hero-banner::after {
+    content: none;
+    display: none;
+  }
+}
