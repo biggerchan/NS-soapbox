@@ -101,3 +101,45 @@
 .site-home .board {
   padding-top: 20px;
 }
+
+/* NICE BOX 手機版投稿按鈕修正 */
+@media (max-width: 760px) {
+
+  /* 保持圖片完整顯示 */
+  .site-home .hero-art {
+    display: block;
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+  }
+
+  /* 將透明點擊區改為實體按鈕 */
+  .site-home .hero-banner .hero-hit {
+    position: relative;
+    display: block;
+    left: auto;
+    top: auto;
+    transform: none;
+    width: calc(100% - 32px);
+    height: 50px;
+    margin: 14px 16px;
+    padding: 0;
+    background: #ffe500;
+    color: #080808;
+    border: 0;
+    border-radius: 8px;
+    font-weight: 800;
+    font-size: 17px;
+    line-height: 50px;
+    text-align: center;
+  }
+
+  .site-home .hero-banner .hero-hit::after {
+    content: "投遞想法 →";
+  }
+
+  .site-home .hero-banner .hero-hit:hover {
+    background: #fff16a;
+    outline: none;
+  }
+}
