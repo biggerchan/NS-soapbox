@@ -65,3 +65,12 @@
  .site-home .hero-banner:after{content:'點選圖片上的「投遞想法」開始發文';display:block;line-height:1.5;color:#ccc;text-align:center;font-size:11px;padding:10px}
  .site-home .site-menu a{font-size:12px}
 }
+
+/* NICE BOX 3.0 投稿按鈕位置修正 */
+.site-home .hero-hit {
+  left: 2.6%;
+  top: 72%;
+  width: 27.8%;
+  height: 15%;
+  transform: none;
+}
