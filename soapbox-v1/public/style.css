@@ -75,3 +75,29 @@
   height: 13%;
   transform: none;
 }
+
+/* NICE BOX 3.0 首頁精簡版 */
+
+/* 隱藏右上角導覽選單 */
+.site-home .site-menu {
+  display: none !important;
+}
+
+/* 隱藏首頁圖片下方的匿名提醒框 */
+.site-home .notice {
+  display: none !important;
+}
+
+/* 隱藏討論區標題下方的小字 */
+.site-home .board-header p {
+  display: none !important;
+}
+
+/* 收緊主視覺與討論區之間的距離 */
+.site-home .site-content {
+  padding-top: 20px;
+}
+
+.site-home .board {
+  padding-top: 20px;
+}
