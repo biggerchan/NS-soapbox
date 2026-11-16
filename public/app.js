@@ -22,6 +22,7 @@ function renderPost(post){
 }
 async function load(){const target=$('#posts');target.replaceChildren(el('p','empty','正在讀取意見...'));const query=new URLSearchParams({page:state.page,sort:$('#sort').value,category:$('#category').value});try{const data=await api('/api/posts?'+query);state.posts=data.posts;state.pages=data.pages;target.replaceChildren(...(data.posts.length?data.posts.map(renderPost):[el('p','empty','目前還沒有文章，成為第一位發聲的人。')]));$('#pageLabel').textContent=`第 ${state.page} / ${state.pages} 頁 · 共 ${data.total} 篇`;$('#prev').disabled=state.page<=1;$('#next').disabled=state.page>=state.pages;}catch(e){target.replaceChildren(el('p','empty','讀取失敗：'+e.message));}}
 $('#composeBtn').addEventListener('click',()=>openDialog('composeDialog'));
+for(const link of document.querySelectorAll('[data-sort-link]'))link.addEventListener('click',()=>{$('#sort').value=link.dataset.sortLink;state.page=1;load();});
 $('#category').addEventListener('change',()=>{state.page=1;load();});$('#sort').addEventListener('change',()=>{state.page=1;load();});
 $('#prev').addEventListener('click',()=>{if(state.page>1){state.page--;load();}});$('#next').addEventListener('click',()=>{if(state.page<state.pages){state.page++;load();}});
 $('#composeForm').addEventListener('submit',async(e)=>{e.preventDefault();try{await api('/api/posts',{method:'POST',body:JSON.stringify({category:$('#newCategory').value,title:$('#newTitle').value,body:$('#newBody').value})});$('#composeForm').reset();$('#composeDialog').close();state.page=1;$('#sort').value='new';$('#category').value='';await load();toast('意見已匿名發布。');}catch(err){toast(err.message);}});
@@ -30,4 +31,15 @@ async function loadComments(){const target=$('#comments');target.replaceChildren
 $('#commentForm').addEventListener('submit',async(e)=>{e.preventDefault();try{await api(`/api/posts/${state.activeId}/comments`,{method:'POST',body:JSON.stringify({body:$('#commentBody').value})});$('#commentBody').value='';await loadComments();await load();toast('匿名留言已發布。');}catch(err){toast(err.message);}});
 function report(type,id){state.report={type,id};openDialog('reportDialog');}
 $('#reportForm').addEventListener('submit',async(e)=>{e.preventDefault();try{await api('/api/reports',{method:'POST',body:JSON.stringify({...state.report,reason:$('#reportReason').value})});$('#reportDialog').close();$('#reportForm').reset();toast('已收到檢舉，謝謝你的回報。');}catch(err){toast(err.message);}});
+loadSiteText();
 load();
+async function loadSiteText(){
+ try {
+  const data=await api('/api/site-settings');
+  for(const node of document.querySelectorAll('[data-site-key]')){
+   const value=data.settings?.[node.dataset.siteKey];
+   if(typeof value==='string')node.textContent=value;
+  }
+  document.title='NICE BOX｜VOICE OUT LOUD';
+ }catch(e){console.warn('文案讀取失敗，保留預設文案',e);}
+}
