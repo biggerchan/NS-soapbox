@@ -76,12 +76,23 @@ CREATE TABLE IF NOT EXISTS reactions (post_id INTEGER NOT NULL REFERENCES posts(
 CREATE TABLE IF NOT EXISTS post_images (id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, data BLOB NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_images_post ON post_images(post_id);
 `);
+db.exec(`
+CREATE TABLE IF NOT EXISTS post_owners (post_id INTEGER PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE, secret_hash TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0, edited_at TEXT, withdrawn_at TEXT);
+CREATE TABLE IF NOT EXISTS photo_id_counter (id INTEGER PRIMARY KEY CHECK(id=1), last_id INTEGER NOT NULL);
+INSERT OR IGNORE INTO photo_id_counter(id,last_id) SELECT 1,COALESCE(MAX(id),0) FROM post_images;
+CREATE TABLE IF NOT EXISTS post_revisions (id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, category TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, image_ids TEXT NOT NULL, changed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
+`);
+function insertPhoto(postId,data){const id=db.prepare('UPDATE photo_id_counter SET last_id=MAX(last_id,(SELECT COALESCE(MAX(id),0) FROM post_images))+1 WHERE id=1 RETURNING last_id').get().last_id;db.prepare('INSERT INTO post_images(id,post_id,data) VALUES(?,?,?)').run(id,postId,data);}
+function ownerHash(req){const key=req.get('x-post-owner')||'';return /^[a-f0-9]{64}$/.test(key)?crypto.createHash('sha256').update(key).digest('hex'):null;}
+function ownership(id){return db.prepare('SELECT secret_hash,version,edited_at,withdrawn_at FROM post_owners WHERE post_id=?').get(id);}
+function owns(req,record){const hash=ownerHash(req);return !!(hash&&record&&!record.withdrawn_at&&crypto.timingSafeEqual(Buffer.from(hash,'hex'),Buffer.from(record.secret_hash,'hex')));}
 const emojis=['👍','😂','😡'];
 function visitor(req){const v=req.get('x-visitor-id')||'';return /^[a-f0-9-]{36}$/i.test(v)?crypto.createHash('sha256').update(v).digest('hex'):null;}
 function decorate(post,req){
  const counts=Object.fromEntries(emojis.map(e=>[e,0]));counts['👍']=post.likes;
  for(const r of db.prepare('SELECT emoji,COUNT(*) AS n FROM reactions WHERE post_id=? GROUP BY emoji').all(post.id)) if(emojis.includes(r.emoji)) counts[r.emoji]+=r.n;
- return {...post,reactions:counts,myReaction:db.prepare(`SELECT emoji FROM reactions WHERE post_id=? AND visitor=? AND emoji IN ('👍','😂','😡')`).get(post.id,visitor(req))?.emoji||null,images:db.prepare('SELECT id FROM post_images WHERE post_id=? ORDER BY id').all(post.id).map(r=>r.id)};
+ const owner=ownership(post.id);
+ return {...post,canEdit:owns(req,owner),edited_at:owner?.edited_at||null,editVersion:owns(req,owner)?owner.version:null,reactions:counts,myReaction:db.prepare(`SELECT emoji FROM reactions WHERE post_id=? AND visitor=? AND emoji IN ('👍','😂','😡')`).get(post.id,visitor(req))?.emoji||null,images:db.prepare('SELECT id FROM post_images WHERE post_id=? ORDER BY id').all(post.id).map(r=>r.id)};
 }
 const app = express();
 if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
@@ -91,7 +102,7 @@ app.use(helmet({contentSecurityPolicy: {
 }}));
 app.use('/api', rateLimit({windowMs: 15*60*1000, limit: 600, standardHeaders: 'draft-7', legacyHeaders: false, message: {error:'操作太頻繁，請稍後再試。'}}));
 const writeLimiter = rateLimit({windowMs: 15*60*1000, limit: 15, standardHeaders:'draft-7', legacyHeaders:false, message: {error:'發文或互動過於頻繁，請 15 分鐘後再試。'}});
-app.use((req,res,next)=>express.json({limit:req.method==='POST'&&req.path==='/api/posts'?'12mb':'16kb'})(req,res,next));
+app.use((req,res,next)=>express.json({limit:((req.method==='POST'&&req.path==='/api/posts')||(req.method==='PUT'&&/^\/api\/posts\/\d+$/.test(req.path)))?'12mb':'16kb'})(req,res,next));
 const categories = ['公司制度','工作環境','福利建議','心情分享','其他'];
 const clean = (v, max) => typeof v === 'string' ? v.trim().slice(0,max+1) : '';
 const isValid = (s, min, max) => s.length >= min && s.length <= max;
@@ -113,21 +124,46 @@ app.get('/api/posts', (req,res) => {
  const total = db.prepare(`SELECT COUNT(*) AS count FROM posts ${where}`).get(...args).count;
  res.json({posts:rows.map(p=>decorate(p,req)), total, page, pages:Math.max(1,Math.ceil(total/limit))});
 });
-app.post('/api/posts', writeLimiter, async (req,res,next) => {
- const category=clean(req.body?.category,20), title=clean(req.body?.title,100), body=clean(req.body?.body,1500);
- if (!categories.includes(category) || !isValid(title,4,100) || !isValid(body,10,1500)) return fail(res,400,'請填寫分類、4–100 字標題及 10–1500 字內容。');
- const inputs=req.body?.images??[];
- if(!Array.isArray(inputs)||inputs.length>4)return fail(res,400,'最多四張照片。');
+async function encodeImages(inputs){
+ if(!Array.isArray(inputs)||inputs.length>4)throw Error('images');
  const images=[];
- try {for(const value of inputs){
+ for(const value of inputs){
   if(typeof value!=='string'||value.length>2800000||!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value))throw Error('format');
   const raw=Buffer.from(value.split(',')[1],'base64');
   const image=sharp(raw,{limitInputPixels:20000000,failOn:'error'});const meta=await image.metadata();
   if(!['jpeg','png','webp'].includes(meta.format)||(meta.pages||1)>1)throw Error('format');
   const data=await image.rotate().resize({width:1600,height:1600,fit:'inside',withoutEnlargement:true}).webp({quality:80}).toBuffer();
   if(data.length>1500000)throw Error('size');images.push(data);
- }}catch{return fail(res,400,'照片格式或大小不符合限制，請重新選擇。');}
- try{const id=db.transaction(()=>{const result=db.prepare('INSERT INTO posts(category,title,body) VALUES(?,?,?)').run(category,title,body);for(const data of images)db.prepare('INSERT INTO post_images(post_id,data) VALUES(?,?)').run(result.lastInsertRowid,data);return result.lastInsertRowid;})();res.status(201).json({id});}catch(e){next(e);}
+ }
+ return images;
+}
+function postFields(req){const category=clean(req.body?.category,20),title=clean(req.body?.title,100),body=clean(req.body?.body,1500);return categories.includes(category)&&isValid(title,4,100)&&isValid(body,10,1500)?{category,title,body}:null;}
+app.post('/api/posts', writeLimiter, async (req,res,next) => {
+ const fields=postFields(req);if(!fields)return fail(res,400,'請填寫分類、4–100 字標題及 10–1500 字內容。');
+ const hash=ownerHash(req);if(!hash)return fail(res,400,'請重新整理頁面後再發布。');
+ let images;try{images=await encodeImages(req.body?.images??[]);}catch{return fail(res,400,'照片格式、數量或大小不符合限制。');}
+ try{const id=db.transaction(()=>{const result=db.prepare('INSERT INTO posts(category,title,body) VALUES(?,?,?)').run(fields.category,fields.title,fields.body);const id=result.lastInsertRowid;db.prepare('INSERT INTO post_owners(post_id,secret_hash) VALUES(?,?)').run(id,hash);for(const data of images)insertPhoto(id,data);return id;})();res.status(201).json({id});}catch(e){next(e);}
+});
+function visibleOwned(req,id){const post=db.prepare('SELECT id,category,title,body FROM posts WHERE id=? AND hidden=0').get(id);const owner=ownership(id);return post&&owns(req,owner)?{post,owner}:null;}
+app.put('/api/posts/:id',writeLimiter,async(req,res,next)=>{
+ const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return fail(res,400,'無效文章。');
+ if(!visibleOwned(req,id))return fail(res,403,'沒有此文章的編輯權限。');
+ const fields=postFields(req),keep=req.body?.keepImages,inputs=req.body?.images??[],version=req.body?.version;
+ if(!fields||!Array.isArray(keep)||!Array.isArray(inputs)||keep.length+inputs.length>4||new Set(keep).size!==keep.length||keep.some(x=>!Number.isSafeInteger(x)||x<1)||!Number.isSafeInteger(version))return fail(res,400,'文章或照片資料不正確。');
+ let images;try{images=await encodeImages(inputs);}catch{return fail(res,400,'照片格式或大小不符合限制。');}
+ try{const result=db.transaction(()=>{
+  const current=visibleOwned(req,id);if(!current)return 403;if(current.owner.version!==version)return 409;
+  const ids=db.prepare('SELECT id FROM post_images WHERE post_id=? ORDER BY id').all(id).map(r=>r.id);if(keep.some(x=>!ids.includes(x)))return 409;
+  db.prepare('INSERT INTO post_revisions(post_id,category,title,body,image_ids) VALUES(?,?,?,?,?)').run(id,current.post.category,current.post.title,current.post.body,JSON.stringify(ids));
+  db.prepare('UPDATE posts SET category=?,title=?,body=? WHERE id=?').run(fields.category,fields.title,fields.body,id);
+  for(const imageId of ids)if(!keep.includes(imageId))db.prepare('DELETE FROM post_images WHERE post_id=? AND id=?').run(id,imageId);
+  for(const data of images)insertPhoto(id,data);
+  db.prepare("UPDATE post_owners SET version=version+1,edited_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE post_id=?").run(id);return 200;
+ })();if(result!==200)return fail(res,result,result===403?'沒有此文章的編輯權限。':'文章已更新，請重新整理再編輯。');res.json({ok:true});}catch(e){next(e);}
+});
+app.delete('/api/posts/:id',writeLimiter,(req,res,next)=>{
+ const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return fail(res,400,'無效文章。');
+ try{const ok=db.transaction(()=>{if(!visibleOwned(req,id))return false;db.prepare('UPDATE posts SET hidden=1 WHERE id=?').run(id);db.prepare("UPDATE post_owners SET withdrawn_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE post_id=?").run(id);return true;})();if(!ok)return fail(res,403,'沒有此文章的刪除權限。');res.json({ok:true});}catch(e){next(e);}
 });
 app.get('/api/posts/:id/comments', (req,res) => {
  const id=Number(req.params.id); if (!Number.isSafeInteger(id)||id<1) return fail(res,400,'無效文章。');
@@ -192,6 +228,7 @@ function saveAnnouncement(req,res){const title=clean(req.body?.title,100),body=c
 app.post('/api/admin/announcements',saveAnnouncement);
 app.put('/api/admin/announcements/:id',saveAnnouncement);
 app.delete('/api/admin/announcements/:id',(req,res)=>res.json({ok:!!db.prepare('DELETE FROM announcements WHERE id=?').run(Number(req.params.id)).changes}));
+app.get('/api/admin/posts/:id/revisions',(req,res)=>{res.set('Cache-Control','no-store');res.json({revisions:db.prepare('SELECT category,title,body,image_ids,changed_at FROM post_revisions WHERE post_id=? ORDER BY id DESC').all(Number(req.params.id)),withdrawn_at:ownership(Number(req.params.id))?.withdrawn_at||null});});
 app.get('/api/admin/posts/:id/images',(req,res)=>res.json({images:db.prepare('SELECT id FROM post_images WHERE post_id=?').all(Number(req.params.id)).map(r=>r.id)}));
 app.get('/api/admin/images/:id',(req,res)=>{const r=db.prepare('SELECT data FROM post_images WHERE id=?').get(Number(req.params.id));if(!r)return fail(res,404,'圖片不存在。');res.set('Cache-Control','no-store').type('webp').send(r.data);});
 app.delete('/api/admin/images/:id',(req,res)=>res.json({ok:!!db.prepare('DELETE FROM post_images WHERE id=?').run(Number(req.params.id)).changes}));
