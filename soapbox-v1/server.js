@@ -7,6 +7,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const sharp = require('sharp');
 
 const PORT = Number(process.env.PORT) || 3000;
 const DB_PATH = path.resolve(process.env.DB_PATH || './data/soapbox.sqlite');
@@ -69,15 +70,28 @@ function siteText(){
   return Object.fromEntries(rows.filter(row=>Object.hasOwn(DEFAULT_SITE_TEXT,row.key)).map(row=>[row.key,row.value]));
 }
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS announcements (id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
+CREATE TABLE IF NOT EXISTS reactions (post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, visitor TEXT NOT NULL, emoji TEXT NOT NULL, PRIMARY KEY(post_id,visitor));
+CREATE TABLE IF NOT EXISTS post_images (id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, data BLOB NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_images_post ON post_images(post_id);
+`);
+const emojis=['👍','😂','😡'];
+function visitor(req){const v=req.get('x-visitor-id')||'';return /^[a-f0-9-]{36}$/i.test(v)?crypto.createHash('sha256').update(v).digest('hex'):null;}
+function decorate(post,req){
+ const counts=Object.fromEntries(emojis.map(e=>[e,0]));counts['👍']=post.likes;
+ for(const r of db.prepare('SELECT emoji,COUNT(*) AS n FROM reactions WHERE post_id=? GROUP BY emoji').all(post.id)) if(emojis.includes(r.emoji)) counts[r.emoji]+=r.n;
+ return {...post,reactions:counts,myReaction:db.prepare(`SELECT emoji FROM reactions WHERE post_id=? AND visitor=? AND emoji IN ('👍','😂','😡')`).get(post.id,visitor(req))?.emoji||null,images:db.prepare('SELECT id FROM post_images WHERE post_id=? ORDER BY id').all(post.id).map(r=>r.id)};
+}
 const app = express();
 if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use(helmet({contentSecurityPolicy: {
   directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'"], imgSrc: ["'self'", 'data:'], connectSrc: ["'self'"], objectSrc: ["'none'"], upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null }
 }}));
-app.use(express.json({limit: '16kb'}));
-app.use('/api', rateLimit({windowMs: 15*60*1000, limit: 180, standardHeaders: 'draft-7', legacyHeaders: false, message: {error:'操作太頻繁，請稍後再試。'}}));
+app.use('/api', rateLimit({windowMs: 15*60*1000, limit: 600, standardHeaders: 'draft-7', legacyHeaders: false, message: {error:'操作太頻繁，請稍後再試。'}}));
 const writeLimiter = rateLimit({windowMs: 15*60*1000, limit: 15, standardHeaders:'draft-7', legacyHeaders:false, message: {error:'發文或互動過於頻繁，請 15 分鐘後再試。'}});
+app.use((req,res,next)=>express.json({limit:req.method==='POST'&&req.path==='/api/posts'?'12mb':'16kb'})(req,res,next));
 const categories = ['公司制度','工作環境','福利建議','心情分享','其他'];
 const clean = (v, max) => typeof v === 'string' ? v.trim().slice(0,max+1) : '';
 const isValid = (s, min, max) => s.length >= min && s.length <= max;
@@ -85,24 +99,35 @@ const fail = (res, code, msg) => res.status(code).json({error: msg});
 
 app.get('/api/site-settings', (req,res) => res.json({settings:siteText()}));
 app.get('/api/posts', (req,res) => {
+ res.set('Cache-Control','no-store');
  const category = clean(req.query.category, 20);
  const sort = req.query.sort === 'popular' ? 'popular' : 'new';
  const limit = 30;
  const page = Math.min(100, Math.max(1, Number.parseInt(req.query.page,10)||1));
  const where = category && categories.includes(category) ? 'WHERE hidden=0 AND category=?' : 'WHERE hidden=0';
  const args = category && categories.includes(category) ? [category] : [];
- const order = sort === 'popular' ? 'likes DESC, created_at DESC' : 'created_at DESC';
+ const order = sort === 'popular' ? `(likes + (SELECT COUNT(*) FROM reactions WHERE post_id=posts.id AND emoji IN ('👍','😂','😡'))) DESC, created_at DESC` : 'created_at DESC';
  const rows = db.prepare(`SELECT id, category, title, body, likes, created_at,
  (SELECT COUNT(*) FROM comments WHERE post_id=posts.id AND hidden=0) AS comments_count
  FROM posts ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args,limit,(page-1)*limit);
  const total = db.prepare(`SELECT COUNT(*) AS count FROM posts ${where}`).get(...args).count;
- res.json({posts:rows, total, page, pages:Math.max(1,Math.ceil(total/limit))});
+ res.json({posts:rows.map(p=>decorate(p,req)), total, page, pages:Math.max(1,Math.ceil(total/limit))});
 });
-app.post('/api/posts', writeLimiter, (req,res) => {
+app.post('/api/posts', writeLimiter, async (req,res,next) => {
  const category=clean(req.body?.category,20), title=clean(req.body?.title,100), body=clean(req.body?.body,1500);
  if (!categories.includes(category) || !isValid(title,4,100) || !isValid(body,10,1500)) return fail(res,400,'請填寫分類、4–100 字標題及 10–1500 字內容。');
- const result=db.prepare('INSERT INTO posts(category,title,body) VALUES(?,?,?)').run(category,title,body);
- res.status(201).json({id:result.lastInsertRowid});
+ const inputs=req.body?.images??[];
+ if(!Array.isArray(inputs)||inputs.length>4)return fail(res,400,'最多四張照片。');
+ const images=[];
+ try {for(const value of inputs){
+  if(typeof value!=='string'||value.length>2800000||!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value))throw Error('format');
+  const raw=Buffer.from(value.split(',')[1],'base64');
+  const image=sharp(raw,{limitInputPixels:20000000,failOn:'error'});const meta=await image.metadata();
+  if(!['jpeg','png','webp'].includes(meta.format)||(meta.pages||1)>1)throw Error('format');
+  const data=await image.rotate().resize({width:1600,height:1600,fit:'inside',withoutEnlargement:true}).webp({quality:80}).toBuffer();
+  if(data.length>1500000)throw Error('size');images.push(data);
+ }}catch{return fail(res,400,'照片格式或大小不符合限制，請重新選擇。');}
+ try{const id=db.transaction(()=>{const result=db.prepare('INSERT INTO posts(category,title,body) VALUES(?,?,?)').run(category,title,body);for(const data of images)db.prepare('INSERT INTO post_images(post_id,data) VALUES(?,?)').run(result.lastInsertRowid,data);return result.lastInsertRowid;})();res.status(201).json({id});}catch(e){next(e);}
 });
 app.get('/api/posts/:id/comments', (req,res) => {
  const id=Number(req.params.id); if (!Number.isSafeInteger(id)||id<1) return fail(res,400,'無效文章。');
@@ -117,13 +142,17 @@ app.post('/api/posts/:id/comments', writeLimiter, (req,res) => {
  const result=db.prepare('INSERT INTO comments(post_id,body) VALUES(?,?)').run(id,body);
  res.status(201).json({id:result.lastInsertRowid});
 });
-app.post('/api/posts/:id/like',writeLimiter,(req,res)=>{
- const id=Number(req.params.id);
- if (!Number.isSafeInteger(id)||id<1) return fail(res,400,'無效文章。');
- const info=db.prepare('UPDATE posts SET likes=likes+1 WHERE id=? AND hidden=0').run(id);
- if (!info.changes) return fail(res,404,'文章不存在。');
- res.json({ok:true});
+app.get('/api/announcements',(req,res)=>res.json({announcements:db.prepare('SELECT * FROM announcements ORDER BY pinned DESC,created_at DESC,id DESC LIMIT 100').all()}));
+app.get('/api/images/:id',(req,res)=>{const r=db.prepare('SELECT i.data FROM post_images i JOIN posts p ON p.id=i.post_id WHERE i.id=? AND p.hidden=0').get(Number(req.params.id));if(!r)return fail(res,404,'圖片不存在。');res.set('Cache-Control','no-store').type('webp').send(r.data);});
+app.post('/api/posts/:id/reaction',writeLimiter,(req,res)=>{
+ const id=Number(req.params.id),v=visitor(req),emoji=req.body?.emoji;
+ if(!v||!(emoji===null||emojis.includes(emoji)))return fail(res,400,'無效表情。');
+ const post=db.prepare('SELECT * FROM posts WHERE id=? AND hidden=0').get(id);if(!post)return fail(res,404,'文章不存在。');
+ if(emoji===null)db.prepare('DELETE FROM reactions WHERE post_id=? AND visitor=?').run(id,v);
+ else db.prepare('INSERT INTO reactions(post_id,visitor,emoji) VALUES(?,?,?) ON CONFLICT(post_id,visitor) DO UPDATE SET emoji=excluded.emoji').run(id,v,emoji);
+ res.json(decorate(post,req));
 });
+app.post('/api/posts/:id/like',writeLimiter,(req,res)=>fail(res,410,'請重新整理頁面，使用新版表情互動。'));
 app.post('/api/reports',writeLimiter,(req,res)=>{
  const type=clean(req.body?.type,20), id=Number(req.body?.id), reason=clean(req.body?.reason,200);
  if (!['post','comment'].includes(type)||!Number.isSafeInteger(id)||id<1||!isValid(reason,4,200)) return fail(res,400,'請選擇有效項目並輸入 4–200 字檢舉理由。');
@@ -158,6 +187,15 @@ app.use('/api/admin', (req,res,next) => {
  next();
 });
 app.use('/api/admin',adminAuth);
+app.get('/api/admin/announcements',(req,res)=>res.json({announcements:db.prepare('SELECT * FROM announcements ORDER BY pinned DESC,id DESC').all()}));
+function saveAnnouncement(req,res){const title=clean(req.body?.title,100),body=clean(req.body?.body,1500),pinned=req.body?.pinned===true?1:0;if(!isValid(title,1,100)||!isValid(body,1,1500))return fail(res,400,'請填寫公告標題與內容。');if(req.params.id){if(!db.prepare('UPDATE announcements SET title=?,body=?,pinned=? WHERE id=?').run(title,body,pinned,Number(req.params.id)).changes)return fail(res,404,'公告不存在。');}else db.prepare('INSERT INTO announcements(title,body,pinned) VALUES(?,?,?)').run(title,body,pinned);res.json({ok:true});}
+app.post('/api/admin/announcements',saveAnnouncement);
+app.put('/api/admin/announcements/:id',saveAnnouncement);
+app.delete('/api/admin/announcements/:id',(req,res)=>res.json({ok:!!db.prepare('DELETE FROM announcements WHERE id=?').run(Number(req.params.id)).changes}));
+app.get('/api/admin/posts/:id/images',(req,res)=>res.json({images:db.prepare('SELECT id FROM post_images WHERE post_id=?').all(Number(req.params.id)).map(r=>r.id)}));
+app.get('/api/admin/images/:id',(req,res)=>{const r=db.prepare('SELECT data FROM post_images WHERE id=?').get(Number(req.params.id));if(!r)return fail(res,404,'圖片不存在。');res.set('Cache-Control','no-store').type('webp').send(r.data);});
+app.delete('/api/admin/images/:id',(req,res)=>res.json({ok:!!db.prepare('DELETE FROM post_images WHERE id=?').run(Number(req.params.id)).changes}));
+
 app.get('/api/admin/reports',(req,res)=>{
  res.json({reports:db.prepare(`SELECT r.*, CASE WHEN r.target_type='post' THEN (SELECT title FROM posts WHERE id=r.target_id) ELSE (SELECT body FROM comments WHERE id=r.target_id) END AS target_excerpt FROM reports r WHERE r.resolved=0 ORDER BY r.created_at DESC LIMIT 200`).all()});
 });
@@ -232,5 +270,5 @@ app.delete('/api/admin/content/:type/:id',(req,res)=>{
 });
 
 app.use(express.static(path.join(__dirname,'public'),{index:'index.html',maxAge:0}));
-app.use((err,req,res,next)=>{if(err instanceof SyntaxError&&'body'in err)return fail(res,400,'JSON 格式錯誤。');console.error(err);fail(res,500,'伺服器發生錯誤。');});
+app.use((err,req,res,next)=>{if(err.type==='entity.too.large')return fail(res,413,'上傳資料太大。');if(err instanceof SyntaxError&&'body'in err)return fail(res,400,'JSON 格式錯誤。');console.error(err);fail(res,500,'伺服器發生錯誤。');});
 app.listen(PORT,()=>console.log(`Soapbox running at http://localhost:${PORT}`));
