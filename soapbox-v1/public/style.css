@@ -202,3 +202,22 @@
 
 /* NICE BOX 3.1 */
 [hidden]{display:none!important}.announcement-box{margin:24px 0;padding:20px;border:1px solid #ddd;border-radius:16px;background:#fff;color:#222}.announcement-box h2{margin:0 0 12px;font-size:1.2rem}.announcement-item{padding:12px 0;border-top:1px solid #e5e5e5}.announcement-item summary{cursor:pointer;font-weight:700;overflow-wrap:anywhere}.announcement-body{white-space:pre-wrap;overflow-wrap:anywhere}.reaction-bar{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}.reaction-button{border:1px solid transparent;border-radius:8px;background:transparent;color:inherit;padding:8px 12px;min-height:44px;min-width:52px;cursor:pointer;font-size:14px;transition:background-color .15s,border-color .15s,color .15s}.reaction-button[aria-pressed=true]{border-color:#ffe50066;background:#ffe50020;color:inherit;box-shadow:none}.reaction-button:focus-visible{outline:2px solid #ffe500;outline-offset:2px}.reaction-button:active{background:#ffe50026}@media(hover:hover){.reaction-button:hover{background:#ffe50016}.reaction-button[aria-pressed=true]:hover{background:#ffe50030}}.photo-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0}.photo-grid:empty{display:none}.photo-button{padding:0;border:0;background:none;cursor:zoom-in}.post-photo{width:100%;height:140px;object-fit:cover;border-radius:10px;display:block}.large-photo{max-width:100%;max-height:75vh;object-fit:contain}.preview-item{min-width:0}.preview-item button{margin-top:5px}.admin-images{margin-top:12px}#announcementForm{display:grid;gap:12px}#announcementForm input[type=checkbox]{width:auto}#photoDialog{max-width:min(95vw,900px)}@media(max-width:600px){.reaction-button{padding:8px 10px}.post-photo{height:110px}}
+/* NICE BOX 3.1 電腦版四欄正方形縮圖 */
+@media (min-width: 761px) {
+  .site-home .post .photo-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .site-home .post .photo-button {
+    min-width: 0;
+  }
+
+  .site-home .post .post-photo {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 10px;
+  }
+}
