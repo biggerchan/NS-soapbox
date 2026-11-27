@@ -13,3 +13,33 @@
 .admin-dark .admin-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}.admin-dark .admin-tools input{flex:1 1 220px}.admin-dark .admin-tools select{width:auto}.admin-dark .admin-tools button{white-space:nowrap}
 .admin-dark details.admin-group{display:block;padding:0}.admin-dark .admin-summary{padding:16px;cursor:pointer;list-style:none;position:relative;padding-right:42px}.admin-dark .admin-summary::-webkit-details-marker{display:none}.admin-dark .admin-summary::after{content:'⌄';position:absolute;right:16px;top:50%;transform:translateY(-50%);color:#ffe500;font-size:24px}.admin-dark details[open]>.admin-summary::after{content:'⌃'}.admin-dark .admin-summary:hover{background:#1a1a1a;border-radius:12px}.admin-dark .admin-summary-top{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px}.admin-dark .admin-summary-top .fine:last-child{margin-left:auto}.admin-dark .admin-title{font-size:17px;color:#fff}.admin-dark .admin-detail{padding:16px;border-top:1px solid #444;display:grid;gap:12px}.admin-dark .admin-comment{padding:12px 0;border-bottom:1px solid #444;display:grid;gap:8px}.admin-dark .admin-comment:last-child{border-bottom:0}.admin-dark .admin-images{grid-template-columns:repeat(4,minmax(0,1fr))}.admin-dark .admin-images .post-photo{height:auto;aspect-ratio:1;object-fit:cover}.admin-dark button:focus-visible,.admin-dark summary:focus-visible{outline:2px solid #ffe500;outline-offset:2px}
 @media(max-width:760px){.admin-dark .admin-summary-top .fine:last-child{margin-left:0;flex-basis:100%}.admin-dark .admin-images{grid-template-columns:repeat(2,minmax(0,1fr))}.admin-dark .admin-main{padding-top:24px}.admin-dark .admin-panel{padding:14px}.admin-dark .admin-main>h1{font-size:26px}}
+/* 後台留言管理：操作按鈕靠右 */
+@media (min-width: 761px) {
+  .admin-dark .admin-comment {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 20px;
+  }
+
+  .admin-dark .admin-comment > .fine {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .admin-dark .admin-comment > .admin-body {
+    grid-column: 1;
+    grid-row: 2;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-dark .admin-comment > .admin-item-actions {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    white-space: nowrap;
+  }
+}
