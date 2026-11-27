@@ -36,7 +36,7 @@ $('#siteForm').addEventListener('submit',async e=>{e.preventDefault();const butt
 async function loadPosts(){const target=$('#adminPosts');target.replaceChildren(info('載入文章中...'));try{
  const data=await api(`/api/admin/posts?page=${pages.posts}`);target.replaceChildren();
  if(!data.posts.length)target.append(info('沒有文章。'));
- for(const item of data.posts){const card=element('article','admin-item');card.append(element('span','tag',item.hidden?'已隱藏':'公開中'),cardTitle(`#${item.id} · ${item.title}`),info(`${item.category} · ${item.created_at} · ${item.comments_count} 則留言`),element('p','admin-body',item.body),itemActions('post',item,loadPosts));target.append(card);}
+ for(const item of data.posts){const card=element('article','admin-item');card.append(element('span','tag',item.hidden?'已隱藏':'公開中'),cardTitle(`#${item.id} · ${item.title}`),info(`${item.category} · ${item.created_at} · ${item.comments_count} 則留言`),element('p','admin-body',item.body),itemActions('post',item,loadPosts));card.append(control('管理照片',()=>loadPostImages(item.id,card)));target.append(card);}
  $('#postPage').textContent=`第 ${data.page} / ${data.pages} 頁 · 共 ${data.total} 篇`;$('#postPrev').disabled=pages.posts===1;$('#postNext').disabled=pages.posts>=data.pages;
  if(data.posts.length===0&&pages.posts>1){pages.posts--;return loadPosts();}
 }catch(e){renderError(target,e);}}
@@ -53,7 +53,7 @@ async function loadReports(){const target=$('#reports');target.replaceChildren(i
  actions.append(control('隱藏內容',()=>runAction('確定隱藏這個內容？',()=>api('/api/admin/hide',{method:'POST',body:JSON.stringify({type:r.target_type,id:r.target_id})}),loadReports)),control('標記已處理',()=>runAction('將此檢舉標記為已處理？',()=>api('/api/admin/resolve',{method:'POST',body:JSON.stringify({id:r.id})}),loadReports)));
  card.append(actions);target.append(card);}
 }catch(e){renderError(target,e);}}
-const loaders={site:loadSite,posts:loadPosts,comments:loadComments,reports:loadReports};
+const loaders={announcements:loadAnnouncements,site:loadSite,posts:loadPosts,comments:loadComments,reports:loadReports};
 function showTab(tab){activeTab=tab;for(const button of document.querySelectorAll('[data-tab]')){const selected=button.dataset.tab===tab;button.classList.toggle('selected',selected);button.setAttribute('aria-selected',String(selected));}for(const panel of document.querySelectorAll('.admin-panel'))panel.hidden=panel.id!==`panel-${tab}`;loaders[tab]();}
 for(const button of document.querySelectorAll('[data-tab]'))button.addEventListener('click',()=>showTab(button.dataset.tab));
 for(const button of document.querySelectorAll('[data-refresh]'))button.addEventListener('click',()=>loaders[button.dataset.refresh]());
@@ -62,3 +62,10 @@ $('#postNext').addEventListener('click',()=>{pages.posts++;loadPosts();});
 $('#commentPrev').addEventListener('click',()=>{if(pages.comments>1){pages.comments--;loadComments();}});
 $('#commentNext').addEventListener('click',()=>{pages.comments++;loadComments();});
 showTab('site');
+
+let announcementId=null;
+function resetAnnouncement(){announcementId=null;$('#announcementForm').reset();}
+$('#announcementCancel').addEventListener('click',resetAnnouncement);
+$('#announcementForm').addEventListener('submit',async e=>{e.preventDefault();const b=e.currentTarget.querySelector('button[type=submit]');b.disabled=true;try{await api('/api/admin/announcements'+(announcementId?'/'+announcementId:''),{method:announcementId?'PUT':'POST',body:JSON.stringify({title:$('#announcementTitle').value,body:$('#announcementBody').value,pinned:$('#announcementPinned').checked})});resetAnnouncement();notify('公告已儲存');await loadAnnouncements();}catch(err){notify(err.message);}finally{b.disabled=false;}});
+async function loadAnnouncements(){const target=$('#adminAnnouncements');try{const {announcements}=await api('/api/admin/announcements');target.replaceChildren();if(!announcements.length)target.append(info('目前沒有公告。'));for(const a of announcements){const card=element('article','admin-item');card.append(cardTitle((a.pinned?'📌 ':'')+a.title),element('p','admin-body',a.body),control('編輯',()=>{announcementId=a.id;$('#announcementTitle').value=a.title;$('#announcementBody').value=a.body;$('#announcementPinned').checked=!!a.pinned;$('#announcementTitle').focus();}),control('刪除',()=>runAction('確定刪除此公告？',()=>api('/api/admin/announcements/'+a.id,{method:'DELETE'}),()=>{resetAnnouncement();return loadAnnouncements();}),'danger-btn'));target.append(card);}}catch(e){renderError(target,e);}}
+async function loadPostImages(id,card){let grid=card.querySelector('.admin-images');if(!grid){grid=element('div','admin-images photo-grid');card.append(grid);}try{const {images}=await api('/api/admin/posts/'+id+'/images');grid.replaceChildren();if(!images.length)grid.append(info('沒有附加照片。'));for(const imageId of images){const item=element('div','preview-item'),img=element('img','post-photo');img.src='/api/admin/images/'+imageId;img.alt='文章附加照片';item.append(img,control('移除照片',()=>runAction('確定永久移除此照片？',()=>api('/api/admin/images/'+imageId,{method:'DELETE'}),()=>loadPostImages(id,card)),'danger-btn'));grid.append(item);}}catch(e){renderError(grid,e);}}
