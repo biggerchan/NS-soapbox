@@ -250,13 +250,27 @@ app.post('/api/admin/resolve',(req,res)=>{
 });
 // 管理員可查看全部文章/留言（包括已隱藏），不修改原有資料結構。
 app.get('/api/admin/posts',(req,res)=>{
- const page=Math.min(1000,Math.max(1,Number.parseInt(req.query.page,10)||1));
- const limit=20;
- const total=db.prepare('SELECT COUNT(*) AS count FROM posts').get().count;
- const posts=db.prepare(`SELECT p.id,p.category,p.title,p.body,p.likes,p.hidden,p.created_at,
- (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.id) AS comments_count
- FROM posts p ORDER BY p.id DESC LIMIT ? OFFSET ?`).all(limit,(page-1)*limit);
+ const page=Math.min(1000,Math.max(1,Number.parseInt(req.query.page,10)||1)),limit=20;
+ const q=String(req.query.q||'').slice(0,200), id=Number(req.query.post_id||0);
+ const where=`WHERE (?=0 OR p.id=?) AND (?='' OR instr(p.title,?)>0 OR instr(p.body,?)>0 OR instr(p.category,?)>0)`;
+ const args=[id,id,q,q,q,q];
+ const order=req.query.sort==='old'?'p.id ASC':req.query.sort==='comments'?'comments_count DESC,p.id DESC':'p.id DESC';
+ const total=db.prepare(`SELECT COUNT(*) AS count FROM posts p ${where}`).get(...args).count;
+ const posts=db.prepare(`SELECT p.id,p.category,p.title,p.body,p.likes,p.hidden,p.created_at,o.edited_at,o.withdrawn_at,
+ (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.id) AS comments_count,
+ (SELECT COUNT(*) FROM post_images i WHERE i.post_id=p.id) AS photos_count
+ FROM posts p LEFT JOIN post_owners o ON o.post_id=p.id ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args,limit,(page-1)*limit);
  res.json({posts,total,page,pages:Math.max(1,Math.ceil(total/limit))});
+});
+app.get('/api/admin/comment-groups',(req,res)=>{
+ const page=Math.min(1000,Math.max(1,Number.parseInt(req.query.page,10)||1)),limit=20;
+ const q=String(req.query.q||'').slice(0,200),id=Number(req.query.post_id||0);
+ const where=`WHERE (?=0 OR p.id=?) AND EXISTS(SELECT 1 FROM comments c WHERE c.post_id=p.id) AND (?='' OR instr(p.title,?)>0 OR EXISTS(SELECT 1 FROM comments c WHERE c.post_id=p.id AND instr(c.body,?)>0))`;
+ const args=[id,id,q,q,q];
+ const order=req.query.sort==='old'?'first_id ASC':req.query.sort==='comments'?'comments_count DESC,last_id DESC':'last_id DESC';
+ const total=db.prepare(`SELECT COUNT(*) AS count FROM posts p ${where}`).get(...args).count;
+ const groups=db.prepare(`SELECT p.id,p.title,p.category,(SELECT COUNT(*) FROM comments c WHERE c.post_id=p.id) AS comments_count,(SELECT MAX(id) FROM comments c WHERE c.post_id=p.id) AS last_id,(SELECT MIN(id) FROM comments c WHERE c.post_id=p.id) AS first_id FROM posts p ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args,limit,(page-1)*limit);
+ res.json({groups,total,page,pages:Math.max(1,Math.ceil(total/limit))});
 });
 app.get('/api/admin/comments',(req,res)=>{
  const page=Math.min(1000,Math.max(1,Number.parseInt(req.query.page,10)||1));
