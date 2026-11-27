@@ -43,15 +43,21 @@
     white-space: nowrap;
   }
 }
-/* 後台公告管理：編輯與刪除按鈕同一列 */
-.admin-dark .announcement-item .admin-item-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-top: 14px;
+/* 公告管理：編輯與刪除按鈕並排 */
+.admin-dark #adminAnnouncements .admin-item {
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
+  column-gap: 10px;
+  row-gap: 10px;
 }
 
-.admin-dark .announcement-item .admin-item-actions .btn {
+.admin-dark #adminAnnouncements .admin-item > .admin-title,
+.admin-dark #adminAnnouncements .admin-item > .admin-body {
+  grid-column: 1 / -1;
+}
+
+.admin-dark #adminAnnouncements .admin-item > button {
+  width: auto;
   margin: 0;
+  white-space: nowrap;
 }
